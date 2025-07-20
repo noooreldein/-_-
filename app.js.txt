@@ -1,0 +1,685 @@
+import React, { useState, useEffect, createContext, useContext } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from 'firebase/auth';
+import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs } from 'firebase/firestore';
+
+// Context for Firebase and User
+const FirebaseContext = createContext(null);
+
+// Main App Component
+const App = () => {
+  const [currentPage, setCurrentPage] = useState('home');
+  const [firebaseApp, setFirebaseApp] = useState(null);
+  const [db, setDb] = useState(null);
+  const [auth, setAuth] = useState(null);
+  const [userId, setUserId] = useState(null);
+  const [loadingFirebase, setLoadingFirebase] = useState(true);
+  const [userEmail, setUserEmail] = useState(null); // To display user email if authenticated
+
+  useEffect(() => {
+    // Initialize Firebase and set up auth listener
+    const initFirebase = async () => {
+      try {
+        // Retrieve Firebase config and app ID from environment variables
+        // IMPORTANT: Replace __app_id and __firebase_config with actual environment variables
+        // when deploying outside of the Canvas environment.
+        // Example: process.env.REACT_APP_FIREBASE_APP_ID
+        // Example: JSON.parse(process.env.REACT_APP_FIREBASE_CONFIG)
+        const appId = process.env.REACT_APP_FIREBASE_APP_ID || 'default-app-id'; // Use actual app ID from .env
+        const firebaseConfig = { // Use actual Firebase config from .env
+          apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
+          authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
+          projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
+          storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
+          messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
+          appId: process.env.REACT_APP_FIREBASE_APP_ID,
+          measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID,
+        };
+
+        if (!firebaseConfig.apiKey) {
+          console.error("Firebase config is missing. Please ensure environment variables are defined.");
+          setLoadingFirebase(false);
+          return;
+        }
+
+        const app = initializeApp(firebaseConfig);
+        const firestoreDb = getFirestore(app);
+        const firebaseAuth = getAuth(app);
+
+        setFirebaseApp(app);
+        setDb(firestoreDb);
+        setAuth(firebaseAuth);
+
+        // Sign in anonymously for initial setup outside Canvas
+        // In a real app, you would implement proper sign-up/sign-in flows.
+        await signInAnonymously(firebaseAuth);
+
+
+        // Listen for auth state changes
+        const unsubscribe = onAuthStateChanged(firebaseAuth, (user) => {
+          if (user) {
+            setUserId(user.uid);
+            setUserEmail(user.email); // Set user email if available
+            console.log("User signed in:", user.uid);
+          } else {
+            setUserId(null);
+            setUserEmail(null);
+            console.log("User signed out.");
+          }
+          setLoadingFirebase(false);
+        });
+
+        // Cleanup subscription on unmount
+        return () => unsubscribe();
+
+      } catch (error) {
+        console.error("Error initializing Firebase:", error);
+        setLoadingFirebase(false);
+      }
+    };
+
+    initFirebase();
+  }, []); // Run only once on component mount
+
+  const handleSignOut = async () => {
+    if (auth) {
+      try {
+        await signOut(auth);
+        console.log("User signed out successfully.");
+        setUserId(null);
+        setUserEmail(null);
+      } catch (error) {
+        console.error("Error signing out:", error);
+      }
+    }
+  };
+
+  if (loadingFirebase) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+        <div className="text-lg font-semibold text-gray-700">جاري تحميل المنصة...</div>
+      </div>
+    );
+  }
+
+  return (
+    <FirebaseContext.Provider value={{ firebaseApp, db, auth, userId, userEmail }}>
+      <div className="min-h-screen bg-gray-50 font-inter">
+        <Header setCurrentPage={setCurrentPage} userId={userId} userEmail={userEmail} handleSignOut={handleSignOut} />
+        <main className="container mx-auto p-4 sm:p-6 lg:p-8">
+          {currentPage === 'home' && <Home />}
+          {currentPage === 'candidate-profile' && <CandidateProfile />}
+          {currentPage === 'company-dashboard' && <CompanyDashboard />}
+          {currentPage === 'community' && <Community />}
+        </main>
+      </div>
+    </FirebaseContext.Provider>
+  );
+};
+
+// Header Component
+const Header = ({ setCurrentPage, userId, userEmail, handleSignOut }) => {
+  return (
+    <header className="bg-gradient-to-r from-blue-600 to-purple-700 text-white shadow-lg p-4 rounded-b-xl">
+      <div className="container mx-auto flex flex-col sm:flex-row justify-between items-center">
+        <h1 className="text-3xl font-bold mb-3 sm:mb-0">تكنو-ربط</h1>
+        <nav className="flex flex-wrap justify-center sm:justify-end gap-x-6 gap-y-2 text-lg">
+          <NavLink onClick={() => setCurrentPage('home')}>الرئيسية</NavLink>
+          <NavLink onClick={() => setCurrentPage('candidate-profile')}>ملف المرشح</NavLink>
+          <NavLink onClick={() => setCurrentPage('company-dashboard')}>لوحة تحكم الشركات</NavLink>
+          <NavLink onClick={() => setCurrentPage('community')}>المجتمع</NavLink>
+          {userId && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm bg-blue-700 px-3 py-1 rounded-full">
+                مرحباً, {userEmail || userId.substring(0, 8) + '...'}
+              </span>
+              <button
+                onClick={handleSignOut}
+                className="bg-red-500 hover:bg-red-600 text-white font-semibold py-1 px-3 rounded-full transition duration-300 ease-in-out transform hover:scale-105"
+              >
+                تسجيل الخروج
+              </button>
+            </div>
+          )}
+        </nav>
+      </div>
+    </header>
+  );
+};
+
+const NavLink = ({ children, onClick }) => (
+  <button
+    onClick={onClick}
+    className="px-4 py-2 rounded-lg hover:bg-white hover:text-blue-600 transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white focus:ring-opacity-50"
+  >
+    {children}
+  </button>
+);
+
+// Home Component - Job Search and Listings
+const Home = () => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [jobListings, setJobListings] = useState([]);
+  const { db, userId } = useContext(FirebaseContext);
+
+  useEffect(() => {
+    if (db && userId) {
+      // Use process.env.REACT_APP_FIREBASE_APP_ID for app ID from .env
+      const appId = process.env.REACT_APP_FIREBASE_APP_ID || 'default-app-id';
+      const jobsCollectionRef = collection(db, `artifacts/${appId}/public/data/jobs`);
+      const q = query(jobsCollectionRef);
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const jobs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setJobListings(jobs);
+      }, (error) => {
+        console.error("Error fetching job listings:", error);
+      });
+
+      return () => unsubscribe(); // Cleanup listener
+    }
+  }, [db, userId]);
+
+  const filteredJobs = jobListings.filter(job =>
+    job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    job.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    job.description.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  return (
+    <section className="bg-white p-8 rounded-xl shadow-lg mb-8">
+      <h2 className="text-4xl font-extrabold text-gray-800 mb-6 text-center">اكتشف فرصتك القادمة</h2>
+      <div className="flex flex-col sm:flex-row gap-4 mb-8">
+        <input
+          type="text"
+          placeholder="ابحث عن وظائف، شركات، مهارات..."
+          className="flex-grow p-4 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+        <button className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-lg transition duration-300 ease-in-out transform hover:scale-105 shadow-md">
+          بحث
+        </button>
+      </div>
+
+      <h3 className="text-3xl font-bold text-gray-800 mb-6">أحدث الوظائف</h3>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {filteredJobs.length > 0 ? (
+          filteredJobs.map(job => (
+            <JobCard key={job.id} job={job} />
+          ))
+        ) : (
+          <p className="text-gray-600 text-lg col-span-full text-center">لا توجد وظائف متاحة حالياً.</p>
+        )}
+      </div>
+    </section>
+  );
+};
+
+const JobCard = ({ job }) => (
+  <div className="bg-gray-50 p-6 rounded-lg shadow-md border border-gray-200 hover:shadow-xl transition-shadow duration-300">
+    <h4 className="text-xl font-semibold text-blue-700 mb-2">{job.title}</h4>
+    <p className="text-gray-600 mb-1">الشركة: <span className="font-medium">{job.company}</span></p>
+    <p className="text-gray-600 mb-4">الموقع: <span className="font-medium">{job.location}</span></p>
+    <p className="text-gray-700 text-sm line-clamp-3">{job.description}</p>
+    <button className="mt-4 bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-5 rounded-lg text-sm transition duration-300 ease-in-out">
+      عرض التفاصيل
+    </button>
+  </div>
+);
+
+// Candidate Profile Component
+const CandidateProfile = () => {
+  const { userId, userEmail } = useContext(FirebaseContext);
+  const [profileData, setProfileData] = useState({
+    name: '',
+    headline: '',
+    skills: [],
+    portfolioLink: '',
+    videoIntro: '',
+    bio: ''
+  });
+  const [isEditing, setIsEditing] = useState(false);
+  const { db } = useContext(FirebaseContext);
+
+  useEffect(() => {
+    if (db && userId) {
+      // Use process.env.REACT_APP_FIREBASE_APP_ID for app ID from .env
+      const appId = process.env.REACT_APP_FIREBASE_APP_ID || 'default-app-id';
+      const userDocRef = doc(db, `artifacts/${appId}/users/${userId}/profile`, 'candidateProfile');
+      const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
+        if (docSnap.exists()) {
+          setProfileData(docSnap.data());
+        } else {
+          console.log("No candidate profile data found for this user.");
+        }
+      }, (error) => {
+        console.error("Error fetching candidate profile:", error);
+      });
+
+      return () => unsubscribe();
+    }
+  }, [db, userId]);
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setProfileData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleSkillsChange = (e) => {
+    setProfileData(prev => ({ ...prev, skills: e.target.value.split(',').map(s => s.trim()) }));
+  };
+
+  const handleSaveProfile = async () => {
+    if (db && userId) {
+      try {
+        // Use process.env.REACT_APP_FIREBASE_APP_ID for app ID from .env
+        const appId = process.env.REACT_APP_FIREBASE_APP_ID || 'default-app-id';
+        const userDocRef = doc(db, `artifacts/${appId}/users/${userId}/profile`, 'candidateProfile');
+        await setDoc(userDocRef, profileData, { merge: true });
+        setIsEditing(false);
+        alert('تم حفظ الملف الشخصي بنجاح!'); // Using alert for simplicity, would use a custom modal in production
+      } catch (error) {
+        console.error("Error saving candidate profile:", error);
+        alert('حدث خطأ أثناء حفظ الملف الشخصي.');
+      }
+    }
+  };
+
+  return (
+    <section className="bg-white p-8 rounded-xl shadow-lg mb-8">
+      <h2 className="text-4xl font-extrabold text-gray-800 mb-6 text-center">ملف تعريف المرشح المعزز</h2>
+
+      {!isEditing ? (
+        <div className="space-y-6">
+          <div className="flex items-center gap-6">
+            <div className="w-24 h-24 bg-gray-200 rounded-full flex items-center justify-center text-gray-500 text-5xl font-bold">
+              {profileData.name ? profileData.name.charAt(0).toUpperCase() : '؟'}
+            </div>
+            <div>
+              <h3 className="text-3xl font-bold text-gray-900">{profileData.name || 'اسم المرشح'}</h3>
+              <p className="text-blue-600 text-lg">{profileData.headline || 'مطور برمجيات متحمس'}</p>
+              {userId && <p className="text-gray-500 text-sm">معرف المستخدم: {userId}</p>}
+            </div>
+          </div>
+
+          <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
+            <h4 className="text-xl font-semibold text-gray-800 mb-3">نبذة شخصية</h4>
+            <p className="text-gray-700">{profileData.bio || 'اكتب هنا نبذة عن نفسك وشغفك بالتقنية.'}</p>
+          </div>
+
+          <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
+            <h4 className="text-xl font-semibold text-gray-800 mb-3">المهارات</h4>
+            <div className="flex flex-wrap gap-2">
+              {profileData.skills.length > 0 ? (
+                profileData.skills.map((skill, index) => (
+                  <span key={index} className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
+                    {skill}
+                  </span>
+                ))
+              ) : (
+                <p className="text-gray-600">أضف مهاراتك هنا.</p>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
+            <h4 className="text-xl font-semibold text-gray-800 mb-3">المشاريع والمحفظة</h4>
+            {profileData.portfolioLink ? (
+              <a href={profileData.portfolioLink} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                عرض محفظة الأعمال
+              </a>
+            ) : (
+              <p className="text-gray-600">أضف رابط محفظة أعمالك هنا.</p>
+            )}
+            <p className="text-gray-500 text-sm mt-2">
+              <span className="font-semibold">نظام مراجعة الأقران:</span> (قريباً! يمكن للمطورين الآخرين تقديم ملاحظات بناءة على مشاريعك.)
+            </p>
+          </div>
+
+          <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
+            <h4 className="text-xl font-semibold text-gray-800 mb-3">مقدمة الفيديو الشخصية</h4>
+            {profileData.videoIntro ? (
+              <div className="aspect-video w-full max-w-md mx-auto bg-gray-300 rounded-lg flex items-center justify-center text-gray-600">
+                <p>فيديو مقدمة المرشح (تشغيل)</p>
+              </div>
+            ) : (
+              <p className="text-gray-600">يمكنك تحميل مقطع فيديو قصير لتقديم نفسك.</p>
+            )}
+          </div>
+
+          <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
+            <h4 className="text-xl font-semibold text-gray-800 mb-3">تقييمات المهارات التفاعلية</h4>
+            <p className="text-gray-600">
+              <span className="font-semibold">تحديات برمجية:</span> (قريباً! شارك في تحديات برمجية تفاعلية واكسب نقاطاً.)
+            </p>
+            <p className="text-gray-600 mt-2">
+              <span className="font-semibold">توصيات المسار المهني:</span> (قريباً! بناءً على مهاراتك، سيقترح الذكاء الاصطناعي مسارات مهنية ودورات تدريبية.)
+            </p>
+          </div>
+
+          <div className="text-center">
+            <button
+              onClick={() => setIsEditing(true)}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg transition duration-300 ease-in-out transform hover:scale-105 shadow-md"
+            >
+              تعديل الملف الشخصي
+            </button>
+          </div>
+        </div>
+      ) : (
+        // Editing Mode
+        <div className="space-y-6">
+          <div className="flex flex-col gap-4">
+            <label className="block">
+              <span className="text-gray-700">الاسم الكامل:</span>
+              <input
+                type="text"
+                name="name"
+                value={profileData.name}
+                onChange={handleChange}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2"
+              />
+            </label>
+            <label className="block">
+              <span className="text-gray-700">العنوان الوظيفي/النبذة المختصرة:</span>
+              <input
+                type="text"
+                name="headline"
+                value={profileData.headline}
+                onChange={handleChange}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2"
+              />
+            </label>
+            <label className="block">
+              <span className="text-gray-700">نبذة شخصية (Bio):</span>
+              <textarea
+                name="bio"
+                value={profileData.bio}
+                onChange={handleChange}
+                rows="4"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2"
+              ></textarea>
+            </label>
+            <label className="block">
+              <span className="text-gray-700">المهارات (افصل بينها بفاصلة):</span>
+              <input
+                type="text"
+                name="skills"
+                value={profileData.skills.join(', ')}
+                onChange={handleSkillsChange}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2"
+              />
+            </label>
+            <label className="block">
+              <span className="text-gray-700">رابط محفظة الأعمال (Portfolio Link):</span>
+              <input
+                type="url"
+                name="portfolioLink"
+                value={profileData.portfolioLink}
+                onChange={handleChange}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2"
+              />
+            </label>
+            <label className="block">
+              <span className="text-gray-700">رابط فيديو المقدمة (Video Introduction URL):</span>
+              <input
+                type="url"
+                name="videoIntro"
+                value={profileData.videoIntro}
+                onChange={handleChange}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2"
+              />
+            </label>
+          </div>
+          <div className="flex justify-center gap-4 mt-6">
+            <button
+              onClick={handleSaveProfile}
+              className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-lg transition duration-300 ease-in-out transform hover:scale-105 shadow-md"
+            >
+              حفظ التغييرات
+            </button>
+            <button
+              onClick={() => setIsEditing(false)}
+              className="bg-gray-400 hover:bg-gray-500 text-white font-bold py-3 px-8 rounded-lg transition duration-300 ease-in-out transform hover:scale-105 shadow-md"
+            >
+              إلغاء
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+};
+
+// Company Dashboard Component
+const CompanyDashboard = () => {
+  const [jobTitle, setJobTitle] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [location, setLocation] = useState('');
+  const [jobDescription, setJobDescription] = useState('');
+  const [postedJobs, setPostedJobs] = useState([]);
+  const { db, userId } = useContext(FirebaseContext);
+
+  useEffect(() => {
+    if (db && userId) {
+      // Use process.env.REACT_APP_FIREBASE_APP_ID for app ID from .env
+      const appId = process.env.REACT_APP_FIREBASE_APP_ID || 'default-app-id';
+      // Fetch public jobs posted by any user (for demonstration)
+      const jobsCollectionRef = collection(db, `artifacts/${appId}/public/data/jobs`);
+      const q = query(jobsCollectionRef, where("postedBy", "==", userId)); // Filter by current user's ID
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const jobs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setPostedJobs(jobs);
+      }, (error) => {
+        console.error("Error fetching posted jobs:", error);
+      });
+
+      return () => unsubscribe();
+    }
+  }, [db, userId]);
+
+  const handlePostJob = async (e) => {
+    e.preventDefault();
+    if (!db || !userId) {
+      alert("الرجاء تسجيل الدخول لنشر وظيفة.");
+      return;
+    }
+
+    if (!jobTitle || !companyName || !location || !jobDescription) {
+      alert("الرجاء ملء جميع الحقول المطلوبة.");
+      return;
+    }
+
+    try {
+      // Use process.env.REACT_APP_FIREBASE_APP_ID for app ID from .env
+      const appId = process.env.REACT_APP_FIREBASE_APP_ID || 'default-app-id';
+      const jobsCollectionRef = collection(db, `artifacts/${appId}/public/data/jobs`);
+      await addDoc(jobsCollectionRef, {
+        title: jobTitle,
+        company: companyName,
+        location: location,
+        description: jobDescription,
+        postedAt: new Date(),
+        postedBy: userId // Store the ID of the user who posted the job
+      });
+      alert('تم نشر الوظيفة بنجاح!');
+      // Clear form
+      setJobTitle('');
+      setCompanyName('');
+      setLocation('');
+      setJobDescription('');
+    } catch (error) {
+      console.error("Error posting job:", error);
+      alert('حدث خطأ أثناء نشر الوظيفة.');
+    }
+  };
+
+  const handleDeleteJob = async (jobId) => {
+    if (db && userId) {
+      try {
+        // Use process.env.REACT_APP_FIREBASE_APP_ID for app ID from .env
+        const appId = process.env.REACT_APP_FIREBASE_APP_ID || 'default-app-id';
+        const jobDocRef = doc(db, `artifacts/${appId}/public/data/jobs`, jobId);
+        await deleteDoc(jobDocRef);
+        alert('تم حذف الوظيفة بنجاح!');
+      } catch (error) {
+        console.error("Error deleting job:", error);
+        alert('حدث خطأ أثناء حذف الوظيفة.');
+      }
+    }
+  };
+
+  return (
+    <section className="bg-white p-8 rounded-xl shadow-lg mb-8">
+      <h2 className="text-4xl font-extrabold text-gray-800 mb-6 text-center">لوحة تحكم الشركات</h2>
+
+      {/* Post New Job Section */}
+      <div className="bg-gray-50 p-6 rounded-lg border border-gray-200 mb-8">
+        <h3 className="text-2xl font-bold text-gray-800 mb-4">نشر وظيفة جديدة</h3>
+        <form onSubmit={handlePostJob} className="space-y-4">
+          <label className="block">
+            <span className="text-gray-700">عنوان الوظيفة:</span>
+            <input
+              type="text"
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2"
+              value={jobTitle}
+              onChange={(e) => setJobTitle(e.target.value)}
+              required
+            />
+          </label>
+          <label className="block">
+            <span className="text-gray-700">اسم الشركة:</span>
+            <input
+              type="text"
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2"
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              required
+            />
+          </label>
+          <label className="block">
+            <span className="text-gray-700">الموقع:</span>
+            <input
+              type="text"
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              required
+            />
+          </label>
+          <label className="block">
+            <span className="text-gray-700">وصف الوظيفة:</span>
+            <textarea
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2"
+              rows="5"
+              value={jobDescription}
+              onChange={(e) => setJobDescription(e.target.value)}
+              required
+            ></textarea>
+          </label>
+          <button
+            type="submit"
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg transition duration-300 ease-in-out transform hover:scale-105 shadow-md w-full"
+          >
+            نشر الوظيفة
+          </button>
+        </form>
+      </div>
+
+      {/* Posted Jobs Section */}
+      <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
+        <h3 className="text-2xl font-bold text-gray-800 mb-4">الوظائف المنشورة</h3>
+        {postedJobs.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {postedJobs.map(job => (
+              <div key={job.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 flex justify-between items-center">
+                <div>
+                  <h4 className="text-lg font-semibold text-blue-700">{job.title}</h4>
+                  <p className="text-gray-600 text-sm">{job.company} - {job.location}</p>
+                </div>
+                <button
+                  onClick={() => handleDeleteJob(job.id)}
+                  className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg text-sm transition duration-300"
+                >
+                  حذف
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-gray-600">لم تقم بنشر أي وظائف بعد.</p>
+        )}
+      </div>
+
+      {/* Placeholder for other features */}
+      <div className="mt-8 bg-gray-50 p-6 rounded-lg border border-gray-200">
+        <h3 className="text-2xl font-bold text-gray-800 mb-4">ميزات إضافية للشركات (قريباً)</h3>
+        <ul className="list-disc list-inside text-gray-700 space-y-2">
+          <li>نظام تتبع المتقدمين (ATS) مدمج</li>
+          <li>أدوات التوظيف التعاونية</li>
+          <li>خطوط أنابيب المقابلات القابلة للتخصيص</li>
+          <li>التحليلات والتقارير الشاملة</li>
+          <li>أدوات بناء العلامة التجارية لصاحب العمل</li>
+        </ul>
+      </div>
+    </section>
+  );
+};
+
+// Community Component
+const Community = () => {
+  return (
+    <section className="bg-white p-8 rounded-xl shadow-lg mb-8">
+      <h2 className="text-4xl font-extrabold text-gray-800 mb-6 text-center">المحتوى المجتمعي والتعليمي</h2>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        {/* Live Coding Sessions / Webinars */}
+        <div className="bg-gray-50 p-6 rounded-lg border border-gray-200 shadow-md">
+          <h3 className="text-2xl font-bold text-gray-800 mb-4">جلسات برمجة حية وندوات عبر الإنترنت</h3>
+          <p className="text-gray-700 mb-4">
+            انضم إلى خبراء الصناعة في جلسات برمجة حية وندوات عبر الإنترنت للتعرف على أحدث التقنيات وأفضل الممارسات.
+          </p>
+          <button className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-5 rounded-lg transition duration-300 ease-in-out">
+            عرض الجلسات القادمة
+          </button>
+        </div>
+
+        {/* Mentorship Program */}
+        <div className="bg-gray-50 p-6 rounded-lg border border-gray-200 shadow-md">
+          <h3 className="text-2xl font-bold text-gray-800 mb-4">برنامج الإرشاد</h3>
+          <p className="text-gray-700 mb-4">
+            تواصل مع الموجهين ذوي الخبرة للحصول على التوجيه والدعم في مسيرتك المهنية التقنية.
+          </p>
+          <button className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-5 rounded-lg transition duration-300 ease-in-out">
+            ابحث عن مرشد
+          </button>
+        </div>
+
+        {/* Virtual Hiring Events */}
+        <div className="bg-gray-50 p-6 rounded-lg border border-gray-200 shadow-md">
+          <h3 className="text-2xl font-bold text-gray-800 mb-4">فعاليات التوظيف الافتراضية</h3>
+          <p className="text-gray-700 mb-4">
+            شارك في معارض الوظائف الافتراضية وتفاعل مباشرة مع الشركات الرائدة.
+          </p>
+          <button className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-5 rounded-lg transition duration-300 ease-in-out">
+            استكشف الفعاليات
+          </button>
+        </div>
+
+        {/* Industry Certification Programs */}
+        <div className="bg-gray-50 p-6 rounded-lg border border-gray-200 shadow-md">
+          <h3 className="text-2xl font-bold text-gray-800 mb-4">برامج شهادات بالتعاون مع الصناعة</h3>
+          <p className="text-gray-700 mb-4">
+            احصل على شهادات معتمدة بالتعاون مع شركات تقنية رائدة لتعزيز مهاراتك.
+          </p>
+          <button className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-5 rounded-lg transition duration-300 ease-in-out">
+            تصفح البرامج
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+};
+
+export default App;
